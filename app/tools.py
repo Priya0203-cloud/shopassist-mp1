@@ -27,6 +27,19 @@ METRO_PREFIXES = {"11", "40", "50", "56", "60", "70"}    # Delhi, Mumbai, Hydera
 
 
 def _find(order_id: str) -> dict:
+    """Look an order up. Raises ValueError for an invalid or unknown order."""
+
+    if not ORDER_ID.match(order_id):
+        raise ValueError(
+            f"order_id must look like ORD-12345, got {order_id!r}"
+        )
+
+    if order_id not in ORDERS:
+        raise ValueError(
+            f"no order {order_id} - ask the customer to check the order number"
+        )
+
+    return ORDERS[order_id]
     """Look an order up. GIVEN. Raises ValueError for an order that doesn't exist."""
     # TODO MP1-T2: validate the FORMAT first. If order_id doesn't match ORDER_ID (like ORD-12345), raise
     #   ValueError(f"order_id must look like ORD-12345, got {order_id!r}")
@@ -58,38 +71,106 @@ def get_delivery_estimate(pincode: str, speed: str = "standard") -> dict:
         pincode: the 6-digit Indian postal code, e.g. 500081
         speed: "standard" or "express"
     """
-    # TODO MP1-T2: validate before answering. Raise ValueError if:
-    #   pincode is not exactly 6 digits                      e.g. "50008", "5000811", "abc123"
-    #   speed is not "standard" or "express"
+    # Validate pincode
+    if not re.fullmatch(r"\d{6}", pincode):
+        raise ValueError(
+            f"pincode must be exactly 6 digits, got {pincode!r}"
+        )
+
+    # Validate delivery speed
+    if speed not in {"standard", "express"}:
+        raise ValueError(
+            f"Invalid speed {speed!r}. Allowed values are: standard, express"
+        )
+
     metro = pincode[:2] in METRO_PREFIXES
+
     if speed == "express":
-        return {"pincode": pincode, "speed": "express", "days": "next day" if metro else "2-3 working days",
-                "charge_rupees": 99}
-    return {"pincode": pincode, "speed": "standard", "days": "2-3 working days" if metro else "4-6 working days",
-            "charge_rupees": 0, "note": "free standard delivery on orders above Rs 499; Rs 49 below that"}
+        return {
+            "pincode": pincode,
+            "speed": "express",
+            "days": "next day" if metro else "2-3 working days",
+            "charge_rupees": 99
+        }
+
+    return {
+        "pincode": pincode,
+        "speed": "standard",
+        "days": "2-3 working days" if metro else "4-6 working days",
+        "charge_rupees": 0,
+        "note": "free standard delivery on orders above Rs 499; Rs 49 below that"
+    }
 
 
 @tool(parse_docstring=True)
 def check_return_eligibility(order_id: str, reason: str) -> dict:
-    """TODO MP1-T1: write this docstring yourself - it is the prompt the model reads to decide WHEN to call this tool.
-    Say what the tool checks, and when to use it (and when not to).
+    """Check whether an item from a specific order is eligible for return.
+
+    Use this tool when a customer asks whether an item from a
+    specific order can be returned.
+
+    Do NOT use this tool for general questions about the return
+    policy. Answer general policy questions from the policy facts.
 
     Args:
-        order_id: TODO - describe it (format, e.g. ORD-10231)
-        reason: TODO - describe it, and list the allowed values (see REASONS above)
-    """
-    # TODO MP1-T1: Northwind Store's return rules, in this order:
-    #   o = _find(order_id)
-    #   1. not delivered yet (status != "delivered")      -> {"eligible": False, "why": "not delivered yet ..."}
-    #   2. o["category"] in NON_RETURNABLE                 -> {"eligible": False, "why": "<category> is non-returnable"}
-    #   3. window = DAMAGED_WINDOW_DAYS if reason in {"damaged", "defective", "wrong_item"} else RETURN_WINDOW_DAYS
-    #      days = (TODAY - date.fromisoformat(o["delivered_on"])).days
-    #      days > window                                    -> {"eligible": False, "why": f"delivered {days} days ago; window is {window} days"}
-    #   4. otherwise -> {"eligible": True, "days_since_delivery": days, "window_days": window,
-    #                    "refund_rupees": o["price"], "how": "start the return on the website: My Orders > Return"}
-    # TODO MP1-T2: raise ValueError if reason is not one of REASONS (say which values are allowed).
-    raise NotImplementedError("TODO MP1-T1")
+        order_id: The order number, e.g. ORD-10231.
+        reason: The reason for return. Allowed values are
+            wrong_size, changed_mind, damaged, defective,
+            wrong_item, not_as_described.
 
+    Returns:
+        A dictionary containing return eligibility and refund details.
+    """
+
+    # Validate the return reason (MP1-T2 input validation)
+    if reason not in REASONS:
+        allowed = ", ".join(sorted(REASONS))
+        raise ValueError(
+            f"Invalid reason {reason!r}. Allowed reasons are: {allowed}"
+        )
+
+    # Find the order
+    o = _find(order_id)
+
+    # RULE 1: Order must be delivered
+    if o["status"] != "delivered":
+        return {
+            "eligible": False,
+            "why": "not delivered yet"
+        }
+
+    # RULE 2: Category must be returnable
+    if o["category"] in NON_RETURNABLE:
+        return {
+            "eligible": False,
+            "why": f"{o['category']} is non-returnable"
+        }
+
+    # RULE 3: Calculate the return window
+    window = (
+        DAMAGED_WINDOW_DAYS
+        if reason in {"damaged", "defective", "wrong_item"}
+        else RETURN_WINDOW_DAYS
+    )
+
+    days = (
+        TODAY - date.fromisoformat(o["delivered_on"])
+    ).days
+
+    if days > window:
+        return {
+            "eligible": False,
+            "why": f"delivered {days} days ago; window is {window} days"
+        }
+
+    # RULE 4: Return is eligible
+    return {
+        "eligible": True,
+        "days_since_delivery": days,
+        "window_days": window,
+        "refund_rupees": o["price"],
+        "how": "start the return on the website: My Orders > Return"
+    }
 
 TOOLS = {"get_order_status": get_order_status, "get_delivery_estimate": get_delivery_estimate,
          "check_return_eligibility": check_return_eligibility}
